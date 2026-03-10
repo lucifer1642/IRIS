@@ -1,5 +1,7 @@
 # IRIS – Retinal Disease Classification
 
+> **Note**: For a highly detailed, technical breakdown of the algorithmic modifications and strategic benefits introduced to this codebase, please see the [CHANGELOG_BENEFITS.md](CHANGELOG_BENEFITS.md) document.
+
 ## File Overview
 
 | File | Purpose | Framework |
