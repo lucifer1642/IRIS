@@ -1,66 +1,63 @@
-# IRIS – Retinal Disease Classification
+# IRIS: Intelligent Retinal Image System
 
-> **Note**: For a highly detailed, technical breakdown of the algorithmic modifications and strategic benefits introduced to this codebase, please see the [CHANGELOG_BENEFITS.md](CHANGELOG_BENEFITS.md) document.
+**A Multi-Label Classification Architecture for RFMiD 2.0**
 
-## File Overview
+The IRIS system is a highly specialized algorithmic ensemble built to accurately map 51 independent retinal disease pathologies simultaneously from fundus imagery. Originally constructed as a naive binary classifier, IRIS has been completely rebuilt to act as a robust **Multi-Label Imbalanced Dataset (MMID)** engine capable of resolving the extreme data scarcities natively found in the optical clinic.
 
-| File | Purpose | Framework |
-|------|---------|-----------|
-| `cnn_preprocess.py` | Resize + normalize all retinal images in-place | OpenCV |
-| `cnn_train.py` | Train binary CNN, plot curves, save `.h5` | TensorFlow/Keras |
-| `yolo_data_analysis.py` | Analyze class distributions in RFMiD CSVs | Pandas |
-| `yolo_prepare_data.py` | Generate YOLO `.txt` label files + YAML config | Ultralytics format |
-| `yolo_train.py` | Train YOLOv8n-cls, evaluate, plot confusion matrix | Ultralytics |
-| `vit_train.py` | Fine-tune ViT-Base on retinal data, save `.pth` | PyTorch + HuggingFace |
-| `vit_evaluate.py` | Load saved ViT, run inference, confusion matrix | PyTorch |
-| `swin_train.py` | Train Swin-Tiny with augmentation + LR scheduler | PyTorch + HuggingFace |
-| `swin_vs_cnn_eval.py` | Side-by-side Swin vs CNN comparison on test set | Mixed (PT + TF) |
+---
 
-## Setup and Requirements
+## 🏗️ Architectural Paradigm
 
-The project requires Python 3.8+ and the following key libraries:
+The training splits provided by the RFMiD 2.0 dataset (60/20/20) contain ultra-rare (Tier 3) diseases that possess fewer than 10 positive occurrences. A traditional CrossEntropy approach fundamentally shatters under this constraint.
 
-```bash
-pip install torch torchvision tensorflow transformers ultralytics opencv-python pandas matplotlib seaborn tqdm scikit-learn
+**Core Upgrades Include:**
+
+1. **51-Class BCEWithLogitsLoss**: All classification heads scale via `pos_weight = min(N_neg / N_pos, 20.0)` calculated statically to prevent NaN degradation on rare classes.
+2. **Backbone Differential LRs**: The core representations (Swin-Tiny, ViT-Base, ResNet50) train at `1e-5`, while the linear projection heads learn actively at `1e-4` to prevent catastrophic forgetting.
+3. **Cross-Domain Augmentation**: Dynamic Gaussian Blurs, Color Jittering, and Random Erasing algorithms simulate variations between **TOPCON** and **CARL ZEISS** fundus cameras.
+4. **Ensemble Inference Array**: A premium FastAPI backend loads all trained backbones into memory conditionally and outputs a unified average probability threshold algorithm directly to the browser.
+
+---
+
+## 🚀 Running the Production Server
+
+The entire local application system is self-contained. Assuming you have already pushed the data through the training pipelines:
+
+```powershell
+cd code
+uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-## Execution Order
+Then navigate to `http://localhost:8000` via your optical tablet or web browser to see the live Glassmorphic Multi-Label interface and perform real-time disease thresholding.
 
-### CNN
+---
 
-```bash
-python cnn_preprocess.py --input-dir <path_to_images> --size 224
-python cnn_train.py --data-dir <path_to_train_test_folders> --save-path retina_cnn_binary_model.h5
-```
+## 🔬 Executing Model Pipelines
 
-### YOLOv8n
+If you intend on retraining the weights from scratch against a new set of data batches, they must adhere exactly to the defined 51-class CSV headers. Ensure your dataset is split securely inside `c:/lpulab/IRIS_CODE/data/...`.
 
-```bash
-python yolo_data_analysis.py --project-dir <path_to_project_dir>
-python yolo_prepare_data.py --project-dir <path_to_project_dir> --images-dir <path_to_images> --output-dir yolo_dataset
-python yolo_train.py --yolo-data-dir yolo_dataset
-```
+1. **Generate Core Clinical Bounds**
 
-### ViT
+    ```powershell
+    cd code
+    python rfmid_data_analysis.py --train-csv "..\data\Training_set\RFMiD_2_Training_labels.csv" --output-dir "utils"
+    ```
 
-```bash
-# Example
-python vit_train.py --train-dir data/train --val-dir data/val --test-dir data/test --val-csv validation_labels.csv --test-csv testing_labels.csv --save-path vit_model_final.pth
-python vit_evaluate.py  --test-dir data/test --model-path vit_model_final.pth
-```
+2. **Sequentially Kickoff Backbone Training**
 
-### Swin Transformer
+    ```powershell
+    python swin_train.py --train-csv "..\data\Training_set\RFMiD_2_Training_labels.csv" --val-csv "..\data\Validation_set\RFMiD_2_Validation_labels.csv" --train-img-dir "..\data\Training_set" --val-img-dir "..\data\Validation_set" --weights-json "utils\rfmid_pos_weights.json" --epochs 60
+    ```
 
-```bash
-python swin_train.py --data-dir <path_to_data> --save-path swin_model.pth
-python swin_vs_cnn_eval.py --test-dir <path_to_test_dir> --swin-model swin_model.pth --cnn-model retina_cnn_binary_model.h5
-```
+    *(Duplicate the command for `vit_train.py` and `cnn_train.py` respectively).*
 
-## Results Summary
+3. **Evaluate Pathological Subclasses**
 
-| Model | Accuracy | Precision | Recall | F1 |
-|-------|----------|-----------|--------|----|
-| CNN | 90.0% | 91.26% | 89.52% | 90.37% |
-| YOLOv8n | 89.06% | 88% | 87% | 88% |
-| ViT | 90.0% | 90.5% | 91% | 90% |
-| Swin | **95.43%** | **95.38%** | **95.43%** | **95.40%** |
+    ```powershell
+    python evaluate_models.py --model-type swin --model-path "swin_model_multilabel.pth" --val-csv "..\data\Validation_set\RFMiD_2_Validation_labels.csv" --test-csv "..\data\Test_set\RFMiD_2_Testing_labels.csv" --val-img-dir "..\data\Validation_set" --test-img-dir "..\data\Test_set"
+    ```
+
+    This sweeps the validation probabilities between threshold bounds of `0.05 - 0.95` to dynamically lock the perfect threshold per class before deploying to the holdout Test set.
+
+---
+📘 See **[CHANGELOG_BENEFITS.md](CHANGELOG_BENEFITS.md)** for a rigorous changelog of legacy fixes regarding float normalization and hidden directory filtration issues.
