@@ -8,10 +8,14 @@ from sklearn.metrics import classification_report, confusion_matrix, ConfusionMa
 import matplotlib.pyplot as plt
 import numpy as np
 
-SAVE_PATH = "/content/drive/MyDrive/retina_project/vit_model_final.pth"
-TEST_DIR = "/content/drive/MyDrive/retina_project/images/test"
-BATCH_SIZE = 16
-NUM_CLASSES = 2
+import argparse
+
+def get_args():
+    parser = argparse.ArgumentParser(description="Evaluate Vision Transformer (ViT) on Retinal Images")
+    parser.add_argument("--test-dir", type=str, required=True, help="Path to testing images directory")
+    parser.add_argument("--model-path", type=str, default="vit_model_final.pth", help="Path to trained model weights")
+    parser.add_argument("--batch-size", type=int, default=16, help="Batch size for testing")
+    return parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}")
@@ -23,19 +27,22 @@ transform = transforms.Compose([
 ])
 
 
-def load_model():
-    model = ViTForImageClassification.from_pretrained("google/vit-base-patch16-224")
-    model.classifier = nn.Linear(model.config.hidden_size, NUM_CLASSES)
-    model.load_state_dict(torch.load(SAVE_PATH, map_location=device))
+def load_model(model_path, num_classes):
+    model = ViTForImageClassification.from_pretrained(
+        "google/vit-base-patch16-224",
+        ignore_mismatched_sizes=True,
+        num_labels=num_classes
+    )
+    model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
     print("Model loaded.")
     return model
 
 
-def get_test_loader():
-    test_dataset = datasets.ImageFolder(root=TEST_DIR, transform=transform)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+def get_test_loader(test_dir, batch_size):
+    test_dataset = datasets.ImageFolder(root=test_dir, transform=transform)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     return test_loader, test_dataset.classes
 
 
@@ -57,7 +64,13 @@ def plot_confusion_matrix(all_labels, all_preds, class_names):
     disp.plot(cmap="Blues", values_format='d')
     plt.title("ViT Confusion Matrix")
     plt.grid(False)
-    plt.show()
+    plt.tight_layout()
+    plt.savefig('vit_confusion_matrix.png')
+    print("Saved confusion matrix to 'vit_confusion_matrix.png'")
+    try:
+        plt.show()
+    except Exception:
+        pass
 
 
 def plot_cumulative_accuracy(model, test_loader):
@@ -80,14 +93,21 @@ def plot_cumulative_accuracy(model, test_loader):
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
-    plt.show()
+    plt.savefig('vit_cumulative_accuracy.png')
+    print("Saved cumulative accuracy to 'vit_cumulative_accuracy.png'")
+    try:
+        plt.show()
+    except Exception:
+        pass
 
+def main():
+    args = get_args()
+    
+    test_loader, class_names = get_test_loader(args.test_dir, args.batch_size)
+    num_classes = len(class_names)
+    print(f"Classes found ({num_classes}): {class_names}")
 
-if __name__ == "__main__":
-    model = load_model()
-    test_loader, class_names = get_test_loader()
-    print(f"Classes: {class_names}")
-
+    model = load_model(args.model_path, num_classes)
     all_labels, all_preds = run_inference(model, test_loader)
 
     print("\nClassification Report:")
@@ -95,3 +115,6 @@ if __name__ == "__main__":
 
     plot_confusion_matrix(all_labels, all_preds, class_names)
     plot_cumulative_accuracy(model, test_loader)
+
+if __name__ == "__main__":
+    main()

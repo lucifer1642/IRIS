@@ -8,13 +8,17 @@ from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropou
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from sklearn.metrics import classification_report, confusion_matrix
 
-DATA_DIR = r"C:\FP\newdata\images"
-TRAIN_PATH = os.path.join(DATA_DIR, "training")
-TEST_PATH = os.path.join(DATA_DIR, "testing")
-MODEL_SAVE_PATH = r"C:\Users\kiit\Desktop\x\retina_cnn_binary_model.h5"
+import argparse
+
+def get_args():
+    parser = argparse.ArgumentParser(description="Train CNN model for retinal disease binary classification")
+    parser.add_argument("--data-dir", type=str, required=True, help="Path to the images directory containing 'training' and 'testing' subfolders")
+    parser.add_argument("--save-path", type=str, default="retina_cnn_binary_model.h5", help="Path to save the trained model .h5 file")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")
+    return parser.parse_args()
+
 IMG_SIZE = (224, 224)
-BATCH_SIZE = 32
-EPOCHS = 10
 
 
 def build_model():
@@ -34,18 +38,18 @@ def build_model():
     return model
 
 
-def get_data_generators():
+def get_data_generators(train_path, test_path, batch_size):
     datagen = ImageDataGenerator(rescale=1.0 / 255)
     train_gen = datagen.flow_from_directory(
-        TRAIN_PATH,
+        train_path,
         target_size=IMG_SIZE,
-        batch_size=BATCH_SIZE,
+        batch_size=batch_size,
         class_mode='binary'
     )
     test_gen = datagen.flow_from_directory(
-        TEST_PATH,
+        test_path,
         target_size=IMG_SIZE,
-        batch_size=BATCH_SIZE,
+        batch_size=batch_size,
         class_mode='binary',
         shuffle=False
     )
@@ -69,7 +73,12 @@ def plot_training_curves(history):
     plt.ylabel("Loss")
     plt.legend()
     plt.tight_layout()
-    plt.show()
+    plt.savefig('cnn_training_curves.png')
+    print("Saved training curves to 'cnn_training_curves.png'")
+    try:
+        plt.show()
+    except Exception:
+        pass
 
 
 def evaluate_model(model, test_gen):
@@ -88,14 +97,28 @@ def evaluate_model(model, test_gen):
     plt.xlabel("Predicted")
     plt.ylabel("Actual")
     plt.title("Confusion Matrix")
-    plt.show()
+    plt.tight_layout()
+    plt.savefig('cnn_confusion_matrix.png')
+    print("Saved confusion matrix to 'cnn_confusion_matrix.png'")
+    try:
+        plt.show()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
-    train_gen, test_gen = get_data_generators()
+    args = get_args()
+    train_path = os.path.join(args.data_dir, "training")
+    test_path = os.path.join(args.data_dir, "testing")
+    
+    train_gen, test_gen = get_data_generators(train_path, test_path, args.batch_size)
     model = build_model()
-    history = model.fit(train_gen, epochs=EPOCHS, validation_data=test_gen)
-    model.save(MODEL_SAVE_PATH)
-    print(f"Model saved at {MODEL_SAVE_PATH}")
+    history = model.fit(train_gen, epochs=args.epochs, validation_data=test_gen)
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(os.path.abspath(args.save_path)), exist_ok=True)
+    model.save(args.save_path)
+    print(f"Model saved at {args.save_path}")
+    
     plot_training_curves(history)
     evaluate_model(model, test_gen)

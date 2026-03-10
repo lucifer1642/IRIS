@@ -1,4 +1,5 @@
 # IRIS – Retinal Disease Classification
+
 ## File Overview
 
 | File | Purpose | Framework |
@@ -13,37 +14,45 @@
 | `swin_train.py` | Train Swin-Tiny with augmentation + LR scheduler | PyTorch + HuggingFace |
 | `swin_vs_cnn_eval.py` | Side-by-side Swin vs CNN comparison on test set | Mixed (PT + TF) |
 
+## Setup and Requirements
+
+The project requires Python 3.8+ and the following key libraries:
+
+```bash
+pip install torch torchvision tensorflow transformers ultralytics opencv-python pandas matplotlib seaborn tqdm scikit-learn
+```
+
 ## Execution Order
 
 ### CNN
+
 ```bash
-python cnn_preprocess.py   # Run once before training
-python cnn_train.py
+python cnn_preprocess.py --input-dir <path_to_images> --size 224
+python cnn_train.py --data-dir <path_to_train_test_folders> --save-path retina_cnn_binary_model.h5
 ```
 
 ### YOLOv8n
+
 ```bash
-python yolo_data_analysis.py   # Optional: inspect dataset
-python yolo_prepare_data.py    # Generate labels + YAML
-python yolo_train.py
+python yolo_data_analysis.py --project-dir <path_to_project_dir>
+python yolo_prepare_data.py --project-dir <path_to_project_dir> --dataset-yaml retinadata.yaml
+python yolo_train.py --data-yaml retinadata.yaml --test-folder <path_to_test_images> --test-csv <path_to_test_labels.csv>
 ```
 
 ### ViT
+
 ```bash
-python vit_train.py     # Saves vit_model_final.pth
-python vit_evaluate.py  # Loads saved model and evaluates
+# Example
+python vit_train.py --train-dir data/train --val-dir data/val --test-dir data/test --val-csv validation_labels.csv --test-csv testing_labels.csv --save-path vit_model_final.pth
+python vit_evaluate.py  --test-dir data/test --model-path vit_model_final.pth
 ```
 
 ### Swin Transformer
-```bash
-python swin_train.py          # Saves swin_model.pth
-python swin_vs_cnn_eval.py    # Compares Swin vs CNN on test set
-```
 
-## Key Paths to Update
-- All scripts use hardcoded paths — update `DATA_DIR`, `SAVE_PATH`, etc. before running
-- Colab scripts assume Google Drive mounted at `/content/drive/MyDrive/retina_project/`
-- Local CNN scripts use `C:\FP\newdata\images\`
+```bash
+python swin_train.py --data-dir <path_to_data> --save-path swin_model.pth
+python swin_vs_cnn_eval.py --test-dir <path_to_test_dir> --swin-model swin_model.pth --cnn-model retina_cnn_binary_model.h5
+```
 
 ## Results Summary
 
