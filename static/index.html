@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IRIS | Retinal Disease Interface</title>
+    <!-- Google Fonts for Modern Typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        /* Base Dark Mode & Glassmorphism Theme */
+        :root {
+            --bg-color: #0b0f19;
+            --glass-bg: rgba(20, 25, 40, 0.6);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --accent: #00f2fe;
+            --accent-glow: rgba(0, 242, 254, 0.3);
+            --text-main: #f0f4f8;
+            --text-muted: #9ba4b5;
+            --success: #38ef7d;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+            background: radial-gradient(circle at 15% 50%, rgba(0, 242, 254, 0.05), transparent 25%),
+                        radial-gradient(circle at 85% 30%, rgba(56, 239, 125, 0.05), transparent 25%),
+                        var(--bg-color);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-x: hidden;
+        }
+
+        /* Header */
+        header {
+            width: 100%;
+            padding: 2rem 0;
+            text-align: center;
+        }
+        h1 {
+            font-size: 3rem;
+            font-weight: 800;
+            margin: 0;
+            background: linear-gradient(90deg, #4facfe, #00f2fe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -1px;
+        }
+        p.subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            margin-top: 5px;
+            font-weight: 300;
+        }
+
+        /* Main Container */
+        .container {
+            width: 90%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Glass Panel Styling */
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 2rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            transition: transform 0.3s ease;
+        }
+
+        /* Upload Zone */
+        .upload-zone {
+            height: 350px;
+            border: 2px dashed rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: var(--accent);
+            background: rgba(0, 242, 254, 0.05);
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .upload-zone img.preview-img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: none;
+            z-index: 10;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: var(--text-muted);
+            transition: color 0.3s ease;
+        }
+        
+        .upload-zone:hover .upload-icon {
+            color: var(--accent);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        /* Results Panel */
+        .results-panel h2 {
+            margin-top: 0;
+            font-size: 1.8rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--glass-border);
+            padding-bottom: 1rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        /* Loading Spinner */
+        .loader {
+            display: none;
+            border: 3px solid rgba(255,255,255,0.1);
+            border-top: 3px solid var(--accent);
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Model Columns */
+        .models-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+        }
+
+        .model-card {
+            background: rgba(0,0,0,0.2);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--glass-border);
+            position: relative;
+        }
+
+        .model-card.ensemble {
+            grid-column: span 2;
+            background: linear-gradient(135deg, rgba(0, 242, 254, 0.05), rgba(56, 239, 125, 0.05));
+            border-color: rgba(0, 242, 254, 0.2);
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        .model-card h3 {
+            margin: 0 0 1rem 0;
+            font-size: 1.2rem;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .ensemble h3 {
+            color: var(--success);
+        }
+
+        /* Probability Bars */
+        .prob-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0.8rem;
+            font-size: 0.9rem;
+        }
+
+        .prob-label {
+            width: 50px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .prob-bar-bg {
+            flex-grow: 1;
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            margin: 0 10px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .prob-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4facfe, #00f2fe);
+            border-radius: 4px;
+            width: 0%;
+            transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .ensemble .prob-bar-fill {
+            background: linear-gradient(90deg, #11998e, #38ef7d);
+        }
+
+        .prob-value {
+            width: 45px;
+            text-align: right;
+            font-family: monospace;
+            color: var(--text-muted);
+        }
+
+        .empty-state {
+            color: var(--text-muted);
+            font-style: italic;
+            text-align: center;
+            margin: 2rem 0;
+            opacity: 0.7;
+        }
+
+        .error-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            background: rgba(255, 50, 50, 0.2);
+            color: #ff6b6b;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            margin-bottom: 10px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>IRIS Dashboard</h1>
+        <p class="subtitle">Multi-Label Retinal Disease Ensemble</p>
+    </header>
+
+    <div class="container">
+        <!-- Upload Section -->
+        <div class="glass-panel">
+            <h3 style="margin-top: 0; font-weight: 600;">Input Scan</h3>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">
+                Upload a fundus image to map against 49 pathologies simultaneously.
+            </p>
+
+            <div class="upload-zone" id="drop-zone">
+                <div class="upload-icon">⇪</div>
+                <div style="font-weight: 600;">Drag & Drop Image</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 5px;">or click to browse</div>
+                <img id="preview" class="preview-img" alt="Scan Preview">
+            </div>
+            <input type="file" id="file-input" accept="image/png, image/jpeg, image/tiff">
+            
+            <div id="upload-status" style="margin-top: 15px; text-align: center; color: var(--accent); font-size: 0.9rem; display: none;">
+                Analyzing via Ensemble Engine...
+            </div>
+        </div>
+
+        <!-- Analysis Section -->
+        <div class="glass-panel results-panel">
+            <h2>
+                Live Inference
+                <div class="loader" id="loader"></div>
+            </h2>
+
+            <!-- Default Empty State -->
+            <div id="empty-state" class="empty-state">
+                Awaiting image upload to trigger multi-model inference pipelines...
+            </div>
+
+            <!-- Dynamic Results Grid -->
+            <div class="models-grid" id="results-grid" style="display: none;">
+                <!-- Filled via JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const preview = document.getElementById('preview');
+        const loader = document.getElementById('loader');
+        const statusText = document.getElementById('upload-status');
+        const emptyState = document.getElementById('empty-state');
+        const resultsGrid = document.getElementById('results-grid');
+
+        // Drag and Drop Effects
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if(e.dataTransfer.files.length) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            if(e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        function handleFile(file) {
+            // Preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+
+            // API Call
+            uploadAndAnalyze(file);
+        }
+
+        async function uploadAndAnalyze(file) {
+            const formData = new FormData();
+            formData.append("file", file);
+
+            // UI State updates
+            emptyState.style.display = 'none';
+            resultsGrid.style.display = 'none';
+            resultsGrid.innerHTML = '';
+            loader.style.display = 'block';
+            statusText.style.display = 'block';
+
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if(!response.ok) throw new Error("API Request Failed");
+                
+                const data = await response.json();
+                renderResults(data);
+
+            } catch(err) {
+                console.error(err);
+                emptyState.innerHTML = `<span style="color:#ff6b6b;">Error analyzing image. Ensure the FastAPI backend is running.</span>`;
+                emptyState.style.display = 'block';
+            } finally {
+                loader.style.display = 'none';
+                statusText.style.display = 'none';
+            }
+        }
+
+        function renderResults(data) {
+            resultsGrid.style.display = 'grid';
+            
+            const models = ['swin', 'vit', 'resnet50', 'ensemble'];
+            const displayNames = {
+                'swin': 'Swin Transformer (Tiny)',
+                'vit': 'Vision Transformer (Base)',
+                'resnet50': 'ResNet-50',
+                'ensemble': 'Ensemble Synthesis'
+            };
+
+            models.forEach(modelKey => {
+                if(!data[modelKey]) return;
+
+                const mData = data[modelKey];
+                const card = document.createElement('div');
+                card.className = `model-card ${modelKey === 'ensemble' ? 'ensemble' : ''}`;
+                
+                let html = `<h3>${displayNames[modelKey]}</h3>`;
+
+                if(mData.status !== "Success" && !mData.status.includes("Averaged")) {
+                    html += `<div class="error-badge">${mData.status}</div>`;
+                }
+
+                if(mData.top_predictions && mData.top_predictions.length > 0) {
+                    mData.top_predictions.forEach(p => {
+                        const pct = (p.probability * 100).toFixed(1);
+                        html += `
+                            <div class="prob-row">
+                                <span class="prob-label">${p.class}</span>
+                                <div class="prob-bar-bg">
+                                    <div class="prob-bar-fill" style="width: 0%"></div>
+                                </div>
+                                <span class="prob-value">${pct}%</span>
+                            </div>
+                        `;
+                    });
+                } else {
+                    html += `<div style="color:var(--text-muted); font-size:0.9rem;">No data generated.</div>`;
+                }
+
+                card.innerHTML = html;
+                resultsGrid.appendChild(card);
+
+                // Animate bars after mounting
+                if(mData.top_predictions) {
+                    setTimeout(() => {
+                        const bars = card.querySelectorAll('.prob-bar-fill');
+                        mData.top_predictions.forEach((p, i) => {
+                            if(bars[i]) bars[i].style.width = `${p.probability * 100}%`;
+                        });
+                    }, 50);
+                }
+            });
+        }
+    </script>
+</body>
+</html>

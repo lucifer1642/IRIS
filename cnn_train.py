@@ -1,125 +1,163 @@
 import os
+import torch
+import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from sklearn.metrics import classification_report, confusion_matrix
-
+from torch.utils.data import DataLoader
 import argparse
+from torchvision.models import resnet50, ResNet50_Weights
+from tqdm import tqdm
+from sklearn.metrics import f1_score
+from utils.dataset import RFMiD2Dataset, load_pos_weights
+from utils.augmentations import get_train_transforms, get_val_transforms
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Train CNN model for retinal disease binary classification")
-    parser.add_argument("--data-dir", type=str, required=True, help="Path to the images directory containing 'training' and 'testing' subfolders")
-    parser.add_argument("--save-path", type=str, default="retina_cnn_binary_model.keras", help="Path to save the trained model .keras file")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")
+    parser = argparse.ArgumentParser(description="Train ResNet50 for Multi-Label Classification")
+    parser.add_argument("--train-csv", type=str, required=True, help="Path to training CSV")
+    parser.add_argument("--val-csv", type=str, required=True, help="Path to validation CSV")
+    parser.add_argument("--img-dir", type=str, required=True, help="Path to dataset images directory")
+    parser.add_argument("--weights-json", type=str, required=True, help="Path to rfmid_pos_weights.json")
+    parser.add_argument("--save-path", type=str, default="cnn_resnet50_multilabel.pth", help="Path to save model")
+    parser.add_argument("--epochs", type=int, default=40, help="Maximum number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
     return parser.parse_args()
 
-IMG_SIZE = (224, 224)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Device: {device}")
 
-
-def build_model():
-    model = Sequential([
-        Conv2D(32, (3, 3), activation='relu', input_shape=(224, 224, 3)),
-        MaxPooling2D(2, 2),
-        Conv2D(64, (3, 3), activation='relu'),
-        MaxPooling2D(2, 2),
-        Conv2D(128, (3, 3), activation='relu'),
-        MaxPooling2D(2, 2),
-        Flatten(),
-        Dense(128, activation='relu'),
-        Dropout(0.5),
-        Dense(1, activation='sigmoid')
-    ])
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-    return model
-
-
-def get_data_generators(train_path, test_path, batch_size):
-    datagen = ImageDataGenerator(rescale=1.0 / 255)
-    train_gen = datagen.flow_from_directory(
-        train_path,
-        target_size=IMG_SIZE,
-        batch_size=batch_size,
-        class_mode='binary'
+def build_model(num_classes=49):
+    model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+    in_features = model.fc.in_features
+    # Replace the classification head
+    model.fc = nn.Sequential(
+        nn.Dropout(0.3),
+        nn.Linear(in_features, num_classes)
     )
-    test_gen = datagen.flow_from_directory(
-        test_path,
-        target_size=IMG_SIZE,
-        batch_size=batch_size,
-        class_mode='binary',
-        shuffle=False
+    return model.to(device)
+
+def train(args):
+    # Load Datasets
+    train_dataset = RFMiD2Dataset(args.train_csv, args.img_dir, transform=get_train_transforms())
+    val_dataset = RFMiD2Dataset(args.val_csv, args.img_dir, transform=get_val_transforms())
+    
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True)
+
+    # Load Pos Weights
+    pos_weight_tensor = load_pos_weights(args.weights_json, device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+
+    # Build Model
+    model = build_model(num_classes=49)
+    
+    # Differential LRs for ResNet50
+    # Head gets 1e-4, the rest of the pretrained network gets 1e-5
+    head_params = list(model.fc.parameters())
+    base_params = [p for n, p in model.named_parameters() if not n.startswith('fc.')]
+    
+    optimizer = torch.optim.AdamW([
+        {'params': base_params, 'lr': 1e-5},
+        {'params': head_params, 'lr': 1e-4}
+    ], weight_decay=1e-4)
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=6, min_lr=1e-7
     )
-    return train_gen, test_gen
+    
+    scaler = torch.cuda.amp.GradScaler()
 
+    best_val_f1 = 0.0
+    patience_counter = 0
+    patience_limit = 10
 
-def plot_training_curves(history):
-    plt.figure(figsize=(12, 5))
+    train_losses, val_f1_scores = [], []
+
+    for epoch in range(args.epochs):
+        # Linear Warmup (3 epochs)
+        if epoch < 3:
+            warmup_factor = (epoch + 1) / 3.0
+            optimizer.param_groups[0]['lr'] = 1e-5 * warmup_factor
+            optimizer.param_groups[1]['lr'] = 1e-4 * warmup_factor
+
+        model.train()
+        total_loss = 0.0
+
+        for images, labels in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{args.epochs} [Train]"):
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
+            
+            with torch.cuda.amp.autocast():
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            total_loss += loss.item()
+
+        avg_train_loss = total_loss / len(train_loader)
+        train_losses.append(avg_train_loss)
+
+        # Validation Phase
+        model.eval()
+        val_preds, val_labels = [], []
+        with torch.no_grad():
+            for images, labels in tqdm(val_loader, desc=f"Epoch {epoch + 1}/{args.epochs} [Val]"):
+                images, labels = images.to(device), labels.to(device)
+                with torch.cuda.amp.autocast():
+                    logits = model(images)
+                    probs = torch.sigmoid(logits)
+                
+                preds = (probs > 0.5).int()
+                val_preds.append(preds.cpu().numpy())
+                val_labels.append(labels.cpu().numpy())
+
+        val_preds = np.vstack(val_preds)
+        val_labels = np.vstack(val_labels)
+        
+        # Macro F1 is explicit early stopping metric target
+        val_macro_f1 = f1_score(val_labels, val_preds, average='macro', zero_division=0)
+        val_f1_scores.append(val_macro_f1)
+
+        print(f"Epoch {epoch + 1}: Train Loss={avg_train_loss:.4f}, Val Macro-F1={val_macro_f1:.4f}")
+
+        # Reduce LR on Plateau
+        if epoch >= 3:
+            scheduler.step(val_macro_f1)
+
+        # Early Stopping Logic (Minimum 20 Epochs)
+        if val_macro_f1 > best_val_f1 + 0.003:
+            best_val_f1 = val_macro_f1
+            patience_counter = 0
+            torch.save(model.state_dict(), args.save_path)
+            print(f"  -> Best model saved! Macro F1: {best_val_f1:.4f}")
+        else:
+            patience_counter += 1
+            print(f"  -> No significant improvement. Patience: {patience_counter}/{patience_limit}")
+
+        if epoch >= 19 and patience_counter >= patience_limit:
+            print(f"Early stopping triggered at epoch {epoch + 1}.")
+            break
+
+    # Plot final curves
+    plt.figure(figsize=(10, 5))
     plt.subplot(1, 2, 1)
-    plt.plot(history.history['accuracy'], label='Train Acc')
-    plt.plot(history.history['val_accuracy'], label='Test Acc')
-    plt.title("Accuracy Over Epochs")
-    plt.xlabel("Epochs")
-    plt.ylabel("Accuracy")
+    plt.plot(train_losses, label='Train Loss')
+    plt.title('BCEWithLogitsLoss')
+    plt.grid()
     plt.legend()
+    
     plt.subplot(1, 2, 2)
-    plt.plot(history.history['loss'], label='Train Loss')
-    plt.plot(history.history['val_loss'], label='Test Loss')
-    plt.title("Loss Over Epochs")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
+    plt.plot(val_f1_scores, label='Val Macro F1', color='green')
+    plt.title('Validation Macro F1')
+    plt.grid()
     plt.legend()
+    
     plt.tight_layout()
-    plt.savefig('cnn_training_curves.png')
-    print("Saved training curves to 'cnn_training_curves.png'")
-    try:
-        plt.show()
-    except Exception:
-        pass
-
-
-def evaluate_model(model, test_gen):
-    test_gen.reset()  # Critical to align true_labels with order of generator
-    preds = model.predict(test_gen)
-    preds_bin = (preds.flatten() > 0.5).astype(int)  # Fixed array shape
-    true_labels = test_gen.classes
-    class_labels = list(test_gen.class_indices.keys())
-
-    print("\nClassification Report:")
-    print(classification_report(true_labels, preds_bin, target_names=class_labels))
-
-    cm = confusion_matrix(true_labels, preds_bin)
-    plt.figure(figsize=(6, 5))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="YlGnBu",
-                xticklabels=class_labels, yticklabels=class_labels)
-    plt.xlabel("Predicted")
-    plt.ylabel("Actual")
-    plt.title("Confusion Matrix")
-    plt.tight_layout()
-    plt.savefig('cnn_confusion_matrix.png')
-    print("Saved confusion matrix to 'cnn_confusion_matrix.png'")
-    try:
-        plt.show()
-    except Exception:
-        pass
-
+    plt.savefig('cnn_multilabel_training.png')
+    print("Saved training curves to cnn_multilabel_training.png")
 
 if __name__ == "__main__":
     args = get_args()
-    train_path = os.path.join(args.data_dir, "training")
-    test_path = os.path.join(args.data_dir, "testing")
-    
-    train_gen, test_gen = get_data_generators(train_path, test_path, args.batch_size)
-    model = build_model()
-    history = model.fit(train_gen, epochs=args.epochs, validation_data=test_gen)
-    
-    # Create directory if it doesn't exist
-    os.makedirs(os.path.dirname(os.path.abspath(args.save_path)), exist_ok=True)
-    model.save(args.save_path)
-    print(f"Model saved at {args.save_path}")
-    
-    plot_training_curves(history)
-    evaluate_model(model, test_gen)
+    train(args)

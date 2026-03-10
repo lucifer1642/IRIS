@@ -1,170 +1,157 @@
 import os
 import torch
 import torch.nn as nn
-import torchvision.transforms as transforms
-import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
-from PIL import Image, UnidentifiedImageError
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
+import argparse
 from transformers import ViTForImageClassification
-from torch.optim import AdamW
 from tqdm import tqdm
+from sklearn.metrics import f1_score
+from utils.dataset import RFMiD2Dataset, load_pos_weights
+from utils.augmentations import get_train_transforms, get_val_transforms
 
-TRAIN_DIR = "/content/drive/MyDrive/retina_project/images/train"
-VAL_DIR = "/content/drive/MyDrive/retina_project/images/val"
-TEST_DIR = "/content/drive/MyDrive/retina_project/images/test"
-VAL_CSV = "/content/drive/MyDrive/retina_project/validation_labels.csv"
-TEST_CSV = "/content/drive/MyDrive/retina_project/testing_labels.csv"
-SAVE_PATH = "/content/drive/MyDrive/retina_project/vit_model_final.pth"
-
-EPOCHS = 10
-BATCH_SIZE = 16
-LR = 3e-5
+def get_args():
+    parser = argparse.ArgumentParser(description="Train ViT for Multi-Label Classification")
+    parser.add_argument("--train-csv", type=str, required=True, help="Path to training CSV")
+    parser.add_argument("--val-csv", type=str, required=True, help="Path to validation CSV")
+    parser.add_argument("--img-dir", type=str, required=True, help="Path to dataset images directory")
+    parser.add_argument("--weights-json", type=str, required=True, help="Path to rfmid_pos_weights.json")
+    parser.add_argument("--save-path", type=str, default="vit_model_multilabel.pth", help="Path to save model")
+    parser.add_argument("--epochs", type=int, default=60, help="Maximum number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
+    return parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}")
 
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.5] * 3, [0.5] * 3)
-])
-
-
-class TrainDataset(Dataset):
-    def __init__(self, image_dir, transform=None):
-        self.samples = []
-        self.transform = transform
-        for label_name in os.listdir(image_dir):
-            label_path = os.path.join(image_dir, label_name)
-            if os.path.isdir(label_path):
-                label = 1 if label_name.lower() == 'disease' else 0
-                for img_name in os.listdir(label_path):
-                    self.samples.append((os.path.join(label_path, img_name), label))
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        img_path, label = self.samples[idx]
-        try:
-            image = Image.open(img_path).convert("RGB")
-            if self.transform:
-                image = self.transform(image)
-            return image, label
-        except (FileNotFoundError, UnidentifiedImageError):
-            return None
-
-
-class CSVImageDataset(Dataset):
-    def __init__(self, image_dir, csv_path, transform=None):
-        self.image_dir = image_dir
-        self.transform = transform
-        self.data = pd.read_csv(csv_path)
-        if 'ID' in self.data.columns and 'Disease_Risk' in self.data.columns:
-            self.data['filename'] = self.data['ID'].apply(lambda x: str(x) if str(x).endswith(('.png', '.jpg')) else f"{x}.png")
-            self.data['label'] = self.data['Disease_Risk'].astype(int)
-        else:
-            raise ValueError("CSV must have 'ID' and 'Disease_Risk' columns.")
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        row = self.data.iloc[idx]
-        img_path = os.path.join(self.image_dir, row['filename'])
-        try:
-            image = Image.open(img_path).convert("RGB")
-            if self.transform:
-                image = self.transform(image)
-            return image, row['label']
-        except (FileNotFoundError, UnidentifiedImageError):
-            return None
-
-
-def collate_skip_none(batch):
-    batch = [b for b in batch if b is not None]
-    if not batch:
-        return torch.empty(0), torch.empty(0)
-    images, labels = zip(*batch)
-    return torch.stack(images), torch.tensor(labels)
-
-
-def build_model():
-    model = ViTForImageClassification.from_pretrained("google/vit-base-patch16-224")
-    model.classifier = nn.Linear(model.config.hidden_size, 2)
+def build_model(num_classes=49):
+    model = ViTForImageClassification.from_pretrained(
+        "google/vit-base-patch16-224",
+        ignore_mismatched_sizes=True,
+        num_labels=num_classes
+    )
     return model.to(device)
 
+def train(args):
+    # Load Datasets
+    train_dataset = RFMiD2Dataset(args.train_csv, args.img_dir, transform=get_train_transforms())
+    val_dataset = RFMiD2Dataset(args.val_csv, args.img_dir, transform=get_val_transforms())
+    
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-def train():
-    train_dataset = TrainDataset(TRAIN_DIR, transform=transform)
-    val_dataset = CSVImageDataset(VAL_DIR, VAL_CSV, transform=transform)
+    # Load Pos Weights
+    pos_weight_tensor = load_pos_weights(args.weights_json, device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,
-                              collate_fn=collate_skip_none)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False,
-                            collate_fn=collate_skip_none)
+    # Build Model
+    model = build_model(num_classes=49)
+    
+    # Differential LRs for ViT
+    optimizer = torch.optim.AdamW([
+        {'params': model.vit.parameters(), 'lr': 1e-5},
+        {'params': model.classifier.parameters(), 'lr': 1e-4}
+    ], weight_decay=1e-4)
 
-    model = build_model()
-    criterion = nn.CrossEntropyLoss()
-    optimizer = AdamW(model.parameters(), lr=LR)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=6, min_lr=1e-7
+    )
+    
+    scaler = torch.cuda.amp.GradScaler()
 
-    train_losses, val_accuracies = [], []
+    best_val_f1 = 0.0
+    patience_counter = 0
+    patience_limit = 10
 
-    for epoch in range(EPOCHS):
+    train_losses, val_f1_scores = [], []
+
+    for epoch in range(args.epochs):
+        # Linear Warmup (3 epochs)
+        if epoch < 3:
+            warmup_factor = (epoch + 1) / 3.0
+            optimizer.param_groups[0]['lr'] = 1e-5 * warmup_factor
+            optimizer.param_groups[1]['lr'] = 1e-4 * warmup_factor
+
         model.train()
-        epoch_loss, total_batches = 0, 0
+        total_loss = 0.0
 
-        for images, labels in tqdm(train_loader, desc=f"Epoch {epoch + 1}"):
-            if images.numel() == 0:
-                continue
+        for images, labels in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{args.epochs} [Train]"):
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
-            outputs = model(images).logits
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-            total_batches += 1
-
-        avg_loss = epoch_loss / max(total_batches, 1)
-        train_losses.append(avg_loss)
-
-        model.eval()
-        correct, total = 0, 0
-        with torch.no_grad():
-            for images, labels in val_loader:
-                if images.numel() == 0:
-                    continue
-                images, labels = images.to(device), labels.to(device)
+            
+            with torch.cuda.amp.autocast():
                 outputs = model(images).logits
-                _, preds = torch.max(outputs, 1)
-                correct += (preds == labels).sum().item()
-                total += labels.size(0)
+                loss = criterion(outputs, labels)
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-        val_acc = correct / total if total > 0 else 0
-        val_accuracies.append(val_acc)
-        print(f"Epoch {epoch + 1}: Loss={avg_loss:.4f}, Val Acc={val_acc:.4f}")
+            total_loss += loss.item()
 
-    torch.save(model.state_dict(), SAVE_PATH)
-    print(f"Model saved at {SAVE_PATH}")
+        avg_train_loss = total_loss / len(train_loader)
+        train_losses.append(avg_train_loss)
 
-    plt.figure(figsize=(10, 4))
+        # Validation Phase
+        model.eval()
+        val_preds, val_labels = [], []
+        with torch.no_grad():
+            for images, labels in tqdm(val_loader, desc=f"Epoch {epoch + 1}/{args.epochs} [Val]"):
+                images, labels = images.to(device), labels.to(device)
+                with torch.cuda.amp.autocast():
+                    logits = model(images).logits
+                    probs = torch.sigmoid(logits)
+                
+                preds = (probs > 0.5).int()
+                val_preds.append(preds.cpu().numpy())
+                val_labels.append(labels.cpu().numpy())
+
+        val_preds = np.vstack(val_preds)
+        val_labels = np.vstack(val_labels)
+        
+        # Macro F1 is explicit early stopping metric target
+        val_macro_f1 = f1_score(val_labels, val_preds, average='macro', zero_division=0)
+        val_f1_scores.append(val_macro_f1)
+
+        print(f"Epoch {epoch + 1}: Train Loss={avg_train_loss:.4f}, Val Macro-F1={val_macro_f1:.4f}")
+
+        # Reduce LR on Plateau
+        if epoch >= 3:
+            scheduler.step(val_macro_f1)
+
+        # Early Stopping Logic (Minimum 20 Epochs)
+        if val_macro_f1 > best_val_f1 + 0.003:
+            best_val_f1 = val_macro_f1
+            patience_counter = 0
+            torch.save(model.state_dict(), args.save_path)
+            print(f"  -> Best model saved! Macro F1: {best_val_f1:.4f}")
+        else:
+            patience_counter += 1
+            print(f"  -> No significant improvement. Patience: {patience_counter}/{patience_limit}")
+
+        if epoch >= 19 and patience_counter >= patience_limit:
+            print(f"Early stopping triggered at epoch {epoch + 1}.")
+            break
+
+    # Plot final curves
+    plt.figure(figsize=(10, 5))
     plt.subplot(1, 2, 1)
-    plt.plot(range(1, EPOCHS + 1), train_losses, marker='o')
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training Loss")
-    plt.grid(True)
+    plt.plot(train_losses, label='Train Loss')
+    plt.title('BCEWithLogitsLoss')
+    plt.grid()
+    plt.legend()
+    
     plt.subplot(1, 2, 2)
-    plt.plot(range(1, EPOCHS + 1), val_accuracies, marker='o', color='green')
-    plt.xlabel("Epoch")
-    plt.ylabel("Val Accuracy")
-    plt.title("Validation Accuracy")
-    plt.grid(True)
+    plt.plot(val_f1_scores, label='Val Macro F1', color='green')
+    plt.title('Validation Macro F1')
+    plt.grid()
+    plt.legend()
+    
     plt.tight_layout()
-    plt.show()
-
+    plt.savefig('vit_multilabel_training.png')
+    print("Saved training curves to vit_multilabel_training.png")
 
 if __name__ == "__main__":
-    train()
+    args = get_args()
+    train(args)
