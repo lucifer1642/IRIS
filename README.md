@@ -35,8 +35,8 @@ python cnn_train.py --data-dir <path_to_train_test_folders> --save-path retina_c
 
 ```bash
 python yolo_data_analysis.py --project-dir <path_to_project_dir>
-python yolo_prepare_data.py --project-dir <path_to_project_dir> --dataset-yaml retinadata.yaml
-python yolo_train.py --data-yaml retinadata.yaml --test-folder <path_to_test_images> --test-csv <path_to_test_labels.csv>
+python yolo_prepare_data.py --project-dir <path_to_project_dir> --images-dir <path_to_images> --output-dir yolo_dataset
+python yolo_train.py --yolo-data-dir yolo_dataset
 ```
 
 ### ViT

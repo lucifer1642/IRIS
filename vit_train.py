@@ -62,7 +62,7 @@ class CSVImageDataset(Dataset):
         self.transform = transform
         self.data = pd.read_csv(csv_path)
         if 'ID' in self.data.columns and 'Disease_Risk' in self.data.columns:
-            self.data['filename'] = self.data['ID'].astype(str) + ".png"
+            self.data['filename'] = self.data['ID'].apply(lambda x: str(x) if str(x).endswith(('.png', '.jpg')) else f"{x}.png")
             self.data['label'] = self.data['Disease_Risk'].astype(int)
         else:
             raise ValueError("CSV must have 'ID' and 'Disease_Risk' columns.")
@@ -116,7 +116,7 @@ def train():
         epoch_loss, total_batches = 0, 0
 
         for images, labels in tqdm(train_loader, desc=f"Epoch {epoch + 1}"):
-            if images.nelement() == 0:
+            if images.numel() == 0:
                 continue
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
@@ -134,7 +134,7 @@ def train():
         correct, total = 0, 0
         with torch.no_grad():
             for images, labels in val_loader:
-                if images.nelement() == 0:
+                if images.numel() == 0:
                     continue
                 images, labels = images.to(device), labels.to(device)
                 outputs = model(images).logits

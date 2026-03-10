@@ -19,7 +19,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="Evaluate and compare Swin Transformer vs CNN")
     parser.add_argument("--test-dir", type=str, required=True, help="Path to testing images directory")
     parser.add_argument("--swin-model", type=str, default="swin_model.pth", help="Path to trained Swin model")
-    parser.add_argument("--cnn-model", type=str, default="retina_cnn_binary_model.h5", help="Path to trained CNN model")
+    parser.add_argument("--cnn-model", type=str, default="retina_cnn_binary_model.keras", help="Path to trained CNN model")
     return parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -84,7 +84,7 @@ def evaluate_cnn(cnn_model_path, test_data_path):
         # Determine if the output is binary (shape [N, 1]) or multi-class (shape [N, C])
         if predictions.shape[-1] == 1:
             # Binary sigmoid output
-            pred_classes = (predictions.numpy() > 0.5).astype(int).flatten()
+            pred_classes = (predictions.flatten() > 0.5).astype(int)
         else:
             # Multi-class softmax output
             pred_classes = tf.argmax(predictions, axis=1).numpy()

@@ -32,8 +32,10 @@ def analyze_dataset(dataset_name, df):
         print(f"\nClass Distribution:\n{df['Disease_Risk'].value_counts()}")
 
     missing = df.isnull().sum()
-    print(f"\nMissing Values:\n{missing}")
-    print(f"Total NaN: {missing.sum()}")
+    if missing.sum() > 0:
+        print(f"\nMissing Values:\n{missing[missing > 0]}")
+    else:
+        print("No Missing Values found.")
 
     disease_cols = df.columns[2:]
     print(f"\nDisease Activity:")

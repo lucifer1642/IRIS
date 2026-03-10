@@ -11,19 +11,23 @@ def get_args():
     return parser.parse_args()
 
 
-def preprocess_and_save_images(folder_path):
-    for subfolder in os.listdir(folder_path):
-        sub_path = os.path.join(folder_path, subfolder)
-        if os.path.isdir(sub_path):
-            for image_name in os.listdir(sub_path):
-                img_path = os.path.join(sub_path, image_name)
+def preprocess_and_save_images(folder_path, target_size):
+    valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.lower().endswith(valid_extensions):
+                img_path = os.path.join(root, file)
                 try:
                     img = cv2.imread(img_path)
                     if img is None:
                         print(f"Could not read: {img_path}")
                         continue
-                    img = cv2.resize(img, target_size)
-                    cv2.imwrite(img_path, img)
+                    
+                    # Resize image directly
+                    img_resized = cv2.resize(img, target_size)
+                    
+                    # Save the resized image directly (normalization happens dynamically during training via Rescaling)
+                    cv2.imwrite(img_path, img_resized)
                 except Exception as e:
                     print(f"Error processing {img_path}: {e}")
 
@@ -33,5 +37,5 @@ if __name__ == "__main__":
     target_size = (args.size, args.size)
     print(f"Preprocessing images in: {args.input_dir}")
     print(f"Target size: {target_size}")
-    preprocess_and_save_images(args.input_dir)
+    preprocess_and_save_images(args.input_dir, target_size)
     print("All images resized and saved in-place.")

@@ -13,7 +13,7 @@ import argparse
 def get_args():
     parser = argparse.ArgumentParser(description="Train CNN model for retinal disease binary classification")
     parser.add_argument("--data-dir", type=str, required=True, help="Path to the images directory containing 'training' and 'testing' subfolders")
-    parser.add_argument("--save-path", type=str, default="retina_cnn_binary_model.h5", help="Path to save the trained model .h5 file")
+    parser.add_argument("--save-path", type=str, default="retina_cnn_binary_model.keras", help="Path to save the trained model .keras file")
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")
     return parser.parse_args()
@@ -82,8 +82,9 @@ def plot_training_curves(history):
 
 
 def evaluate_model(model, test_gen):
+    test_gen.reset()  # Critical to align true_labels with order of generator
     preds = model.predict(test_gen)
-    preds_bin = (preds > 0.5).astype(int)
+    preds_bin = (preds.flatten() > 0.5).astype(int)  # Fixed array shape
     true_labels = test_gen.classes
     class_labels = list(test_gen.class_indices.keys())
 
